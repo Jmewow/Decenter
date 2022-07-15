@@ -54,24 +54,7 @@ const SearchResults = () => {
     useContext(CdpContext);
   return (
     <Fragment>
-      <Fade in={searchInProgress || !!cdpArray.length}>
-        <Progress
-          margin={"20px 0"}
-          value={cdpArray.length}
-          hasStripe={false}
-          isAnimated={false}
-          max={resultsLength}
-          colorScheme={
-            searchInProgress
-              ? cdpArray.length < resultsLength / 2
-                ? "red"
-                : "yellow"
-              : "teal"
-          }
-          background={"#2c3e50"}
-          h={"1px"}
-        />
-      </Fade>
+      <Fade in={searchInProgress || !!cdpArray.length}></Fade>
       <Fade in={!!searchError}>
         {!!searchError && (
           <Text

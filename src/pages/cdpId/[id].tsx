@@ -3,6 +3,7 @@ import Details from "../../components/details";
 
 import { useContext, Fragment } from "react";
 import { MetaMaskContext } from "../../contexts/metaMaskContext";
+import { Container } from "@chakra-ui/react";
 
 const IdPage: NextPage = () => {
   const { web3 } = useContext(MetaMaskContext);

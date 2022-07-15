@@ -1,4 +1,4 @@
-import { useEffect, useContext, useRef, useState } from "react";
+import { useEffect, useContext, useRef, useState, Fragment } from "react";
 import { CdpContext } from "../contexts/cdpContext";
 import MetaMaskButton from "./metaMaskButton";
 import { MetaMaskContext } from "../contexts/metaMaskContext";
@@ -36,9 +36,12 @@ const SearchInput = () => {
     setSearchError,
     searchInProgress,
   } = useContext(CdpContext);
+  const { web3 } = useContext(MetaMaskContext);
+
   const firstMount = useRef<boolean>(false);
   const cachedId = useRef<any>();
-  const { web3 } = useContext(MetaMaskContext);
+  const progress = useRef<number>(0);
+
   // Ako se trazi id koji nije u blizini, npr. WBC-A uz input 1, progress bar se nece mrdati, pa pokazujemo i id-eve pretrazenih CDP-ova, cisto da user dobije neki feedback
   const [progressInfo, setProgressInfo] = useState("");
   const [localCdpId, setLocalCdpId] = useState(contextCdpId);
@@ -48,10 +51,12 @@ const SearchInput = () => {
     if (firstMount.current) {
       setLocalCdpId(cdpId);
     } else firstMount.current = true;
+    progress.current = 0;
   }, [cdpId]);
 
   useEffect(() => {
-    let frame: number;
+    progress.current = 0;
+    let interval: any;
     // Preskace se izvodnjenje ovog bloka prilikom mountovanja komponente, da bih izbegao pretragu bez podataka, ili pretragu podataka koje vec imamo
     // Ceo ovaj if statement je malo preteran, ali nisam nasao bolji nacin da ukljucim array dependencije i da se blok izvodi samo kada se debouncovana vrednost promeni
     if (
@@ -61,109 +66,85 @@ const SearchInput = () => {
       contract &&
       web3
     ) {
-      const asyncWrapper = async () => {
-        setSearchError("");
+      setSearchError("");
 
-        // Ako je pretraga zavrsena i ponovo porkenuta, CDP array se resetuje
-        if (!searchInProgress) setcdpArray([]);
-        setSearchInProgress(true);
-        setCdpId(cdpId);
+      // Ako je pretraga zavrsena i ponovo porkenuta, CDP array se resetuje
+      setcdpArray([]);
+      setSearchInProgress(true);
+      setCdpId(cdpId);
 
-        let parsedCdpId = parseInt(cdpId);
-        let maxCdpId: number = parsedCdpId;
-        let minCdpId: number = parsedCdpId;
+      let parsedCdpId = parseInt(cdpId);
+      let maxCdpId: number = parsedCdpId;
+      let minCdpId: number = parsedCdpId;
 
-        let n = 0;
-        let matchCounter = 0;
-        let missmatchCounter = 0;
+      let n = 0;
+      let matchCounter = 0;
+      let missmatchCounter = 0;
 
-        let start: number;
-        let done = false;
-        let i = 0;
+      let i = 0;
+      const newCdpArray = new Array(resultsLength);
+      let start = performance.now();
+      interval = setInterval(async () => {
+        // Ako se u sred pretrage promeni CDP id, resetuj search
+        if (cachedId.current && cachedId.current !== cdpId) {
+          clearInterval(interval);
+        }
+        // Trazi se jedan ID iznad, pa zatim ispod unesenog, kako bi se pronasao skup najblizih. Daje se prednost vecem broju
+        if (
+          maxCdpId == parsedCdpId ||
+          parsedCdpId - minCdpId >= maxCdpId - parsedCdpId ||
+          minCdpId == 0
+        ) {
+          if (i > 0) maxCdpId++;
+          n = maxCdpId;
+        } else {
+          minCdpId--;
+          n = minCdpId;
+        }
+        i++;
+        // Poziva se contract-ova getCdpInfo funkcija
+        let { cdp, sameType } = await getCdp(n, contract, web3, collateralType);
+        setProgressInfo(cdp.id);
 
-        //------------------------------------------- STEP START ------------------------------------------//
-
-        // Za ovo bas nisam siguran. Probao sam setTimeout i setInterval. SetTimeout je bio previse spor, a setInterval brz, ali nepredvidiv, zbog asinhrone prirode, ubacujuci vise elemenata u array cak i kad ga zaustavim. Ovo se desava kada se u sred pretrage ukuca drugi id
-        // requestAnimationFrame mi deluje kao hack, ali mi je dao srednju brzinu uz dobru pouzdanost. Ako ne bih prikazivao ubacivanje elemenata u array na ekranu, vec samo krajnji rezultat, mogao bih da koristim setInterval i sredim CDP array pre prikazivanja
-        // Jedna od nuspojava requestAnimationFrame-a je da je pretraga pauzirana dok je korisnik na drugom tabu
-
-        const step = async (timestamp: number) => {
-          // Ako se u sred pretrage promeni CDP id, resetuj search
-          if (cachedId.current && cachedId.current !== cdpId) {
-            setcdpArray([]);
-            cancelAnimationFrame(frame);
-            return;
-          }
-          if (start === undefined) {
-            start = timestamp;
-          }
-          const elapsed = timestamp - start;
-
-          if (elapsed >= 200) {
-            i++;
-            start = timestamp;
-
-            // Trazi jedan ID iznad, pa zatim ispod unesenog, kako bi nasao skup najblizih. Daje prednost vecem broju
-            if (
-              maxCdpId == parsedCdpId ||
-              parsedCdpId - minCdpId >= maxCdpId - parsedCdpId ||
-              minCdpId == 0
-            ) {
-              if (i > 1) maxCdpId++;
-              n = maxCdpId;
-            } else {
-              minCdpId--;
-              n = minCdpId;
-            }
-            // Poziva contract-ovu getCdpInfo funkciju
-            let { cdp, sameType } = await getCdp(
-              n,
-              contract,
-              web3,
-              collateralType
-            );
-            setProgressInfo(cdp.id);
-
-            // Ako je vraceni CDP collateral type istog tipa kao odabrani, dodaje se u CDP array, koji se onda prikazuje na ekranu
-            if (sameType) {
-              matchCounter++;
-              missmatchCounter = 0;
-              if (matchCounter <= resultsLength) {
-                setcdpArray((cdpArray: any) => [...cdpArray, cdp]);
-              } else {
-                done = true;
-              }
-            } else {
-              // Ako je contract pozvan 50 puta, bez poklapanja pretrage, prekida se pretraga i pokazuje poruka
-              missmatchCounter++;
-              if (missmatchCounter >= 50) {
-                setSearchError(
-                  "Search is taking too long. Please enter different CDP ID, or change collateral type."
-                );
-                done = true;
-                endSearch();
-              }
-            }
-          }
-
-          if (matchCounter < resultsLength && !done) {
-            window.requestAnimationFrame(step);
+        const then = performance.now();
+        // Ako je vraceni CDP collateral type istog tipa kao odabrani, dodaje se u CDP array, koji se onda prikazuje na ekranu
+        if (sameType) {
+          if (matchCounter < resultsLength) {
+            newCdpArray[matchCounter] = cdp;
           } else {
+            // Zavrsena pretraga
+            setcdpArray(newCdpArray);
             endSearch();
           }
-        };
-        const endSearch = () => {
-          setSearchInProgress(false);
-        };
-        frame = window.requestAnimationFrame(step);
-        cachedId.current = cdpId;
-        // -------------------------------------------- STEP END -------------------------------------------//
+          matchCounter++;
+          if (progress.current == 0 && matchCounter > 1) {
+            clearInterval(interval);
+          } else progress.current = matchCounter;
+
+          missmatchCounter = 0;
+        } else {
+          // Ako je contract pozvan 50 puta, bez poklapanja pretrage, prekida se pretraga i pokazuje poruka
+          missmatchCounter++;
+          if (missmatchCounter >= 50) {
+            setcdpArray(newCdpArray);
+            setSearchError(
+              "Search is taking too long. Please enter different CDP ID, or change collateral type."
+            );
+            endSearch();
+          }
+        }
+      }, 220);
+
+      const endSearch = () => {
+        setSearchInProgress(false);
+        clearInterval(interval);
       };
-      asyncWrapper();
+
+      cachedId.current = cdpId;
     } else {
       firstMount.current = true;
     }
-    () => cancelAnimationFrame(frame);
+    () => clearInterval(interval);
     // Zbog ovoga sam morao da iskljucim linter ( ignoreDuringBuilds: true >> next.config.js), jer me terao da ukljucim setState u dependency array, sto je uzrokovalo rerenderovanje, a React dokumentacija tvrdi da za tim nema potrebe
     // "React guarantees that setState function identity is stable and won’t change on re-renders. This is why it’s safe to omit from the useEffect or useCallback dependency list."
   }, [debouncedCdpId, collateralType, resultsLength, cdpId, contract, web3]);
@@ -172,49 +153,87 @@ const SearchInput = () => {
     setCollateralType(type);
   };
   return (
-    <Flex>
-      <MetaMaskButton />
+    <Fragment>
+      <Flex>
+        <MetaMaskButton />
 
-      <Spacer />
-      <Menu isLazy lazyBehavior="keepMounted" autoSelect={false}>
-        <MenuButton
-          margin={"0 10px"}
+        <Spacer />
+        <Menu isLazy lazyBehavior="keepMounted" autoSelect={false}>
+          <MenuButton
+            margin={"0 10px"}
+            background={"#2c3e50"}
+            as={Button}
+            border={0}
+            width={220}
+            disabled={searchInProgress}
+            _focus={{ bg: "#2c3e50" }}
+            _hover={{ bg: "#243342" }}
+            _expanded={{ bg: "#243342" }}
+          >
+            {searchInProgress ? progressInfo : collateralType}
+          </MenuButton>
+          <MenuList background={"#2c3e50"} border={0}>
+            {collateralTypeOptions(
+              (type: string) => handleCollateralType(type),
+              collateralType,
+              "ETH-A",
+              "WBTC-A",
+              "USDC-A"
+            )}
+          </MenuList>
+        </Menu>
+        <Spacer />
+        <Input
+          value={localCdpId}
+          type="text"
+          placeholder={
+            collateralType == "Collateral type"
+              ? "Please select collateral type"
+              : "Enter CDP ID"
+          }
           background={"#2c3e50"}
-          as={Button}
           border={0}
-          width={220}
-          disabled={searchInProgress}
-          _focus={{ bg: "#2c3e50" }}
-          _hover={{ bg: "#243342" }}
-          _expanded={{ bg: "#243342" }}
+          disabled={collateralType == "Collateral type"}
+          onChange={e =>
+            // Ovaj regex uklanja prazna polja, nule na pocetku i sve osim brojeva
+            setCdpIdValue(
+              e.target.value.replace(/^$|^0+/, "").replace(/\D/g, "")
+            )
+          }
+        />
+      </Flex>
+      {true && (
+        <div
+          style={{
+            position: "relative",
+            height: 1.3,
+            width: "100%",
+            background: "#2c3e50",
+            overflow: "hidden",
+            margin: "20px 0",
+          }}
         >
-          {searchInProgress ? progressInfo : collateralType}
-        </MenuButton>
-        <MenuList background={"#2c3e50"} border={0}>
-          {collateralTypeOptions(
-            (type: string) => handleCollateralType(type),
-            collateralType,
-            "ETH-A",
-            "WBTC-A",
-            "USDC-A"
-          )}
-        </MenuList>
-      </Menu>
-      <Spacer />
-      <Input
-        // defaultValue={contextCdpId}
-        value={localCdpId}
-        type="text"
-        placeholder="Search"
-        background={"#2c3e50"}
-        border={0}
-        disabled={collateralType == "Collateral type"}
-        onChange={e =>
-          // Ovaj regex uklanja prazna polja, nule na pocetku i sve osim brojeva
-          setCdpIdValue(e.target.value.replace(/^$|^0+/, "").replace(/\D/g, ""))
-        }
-      />
-    </Flex>
+          <div
+            style={{
+              width: `${(progress.current / resultsLength) * 100}%`,
+              background: `${
+                searchInProgress
+                  ? progress.current < resultsLength / 2
+                    ? "red"
+                    : "#f39c12"
+                  : "teal"
+              }`,
+              height: 1.3,
+              transition: `all ${progress.current < 2 ? 0 : 0.2}s linear`,
+              position: "absolute",
+              top: 0,
+              left: 0,
+              display: `${progress.current == 0 ? "none" : "block"}`,
+            }}
+          ></div>
+        </div>
+      )}
+    </Fragment>
   );
 };
 
