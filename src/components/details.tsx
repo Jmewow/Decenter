@@ -48,7 +48,7 @@ const Details = () => {
   const [debtHealth, setDebtHealth] = useState<number>(0);
 
   useEffect(() => {
-    // Kada iz url-a stigne CDP ID, taj CDP izvlaci se iz array-a i pomocu njega kreira novi object sa vrednostima koje treba prikazati
+    // Kada iz url-a stigne CDP ID, taj CDP izvlaci se iz array-a i pomocu njega kreira novi object sa vrednostima koje treba prikazatii
     let createDisplayCdp = async () => {
       let id = router.query.id;
       let index = cdpArray.findIndex(x => x["id"] == id);
